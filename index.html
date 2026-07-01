@@ -1,11 +1,12 @@
-<div id="root"></div>
-<head><link rel="icon" type="image/png" href="favicon.png"></head>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <link rel="icon" type="image/png" href="favicon.png"></head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Google Contest</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
 <style>
   :root{
     --bg:#0f0d0d;
@@ -22,8 +23,8 @@
     --empty:#eee4cf;
   }
   * { box-sizing: border-box; }
-  body { margin:0; }
-  #root {
+  html, body { margin:0; }
+  body {
     font-family:'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     color: var(--ink);
     background: var(--bg);
@@ -66,13 +67,44 @@
   ::-webkit-scrollbar { height: 10px; }
   ::-webkit-scrollbar-thumb { background: var(--red-deep); border-radius: 10px; }
 </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<!-- Firebase (compat SDK, matches the pattern used in Mark's other tools) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+  // ===== FILL THIS IN =====
+  // Firebase Console > Project Settings > General > Your apps > SDK setup and configuration
+  // Reuse an existing TTA project if you already have one, or create a new project.
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+    projectId: "YOUR_PROJECT",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  // Data lives under this path, change it if you want to reuse one Firebase
+  // project across multiple TTA tools without them colliding.
+  const DATA_PATH = "reviewContestSoho/grid";
+</script>
 
 <script type="text/babel">
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
 const NAMES = ["Destiny","Dustin","Eve","Gio","Ian","Jaina","Kathy","Liv","Marcellus","Mic","Micaela","Michael","Nick","Owen","Paul","Rashad","Shiloh","Skye","Tamika","Will","Xavier","Zora"];
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-const STORAGE_KEY = "review-contest:v1";
 const TROPHIES = ['🥇','🥈','🥉'];
 
 // Change this to whatever PIN managers should use to unlock editing.
@@ -157,59 +189,55 @@ function App(){
   const [error, setError] = useState(null);
   const [poppedKey, setPoppedKey] = useState(null);
   const [unlocked, setUnlocked] = useState(false);
+  const [connected, setConnected] = useState(false);
 
+  // Live Firebase listener, this is what makes it update on other computers
+  // in real time instead of needing a manual refresh.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await window.storage.get(STORAGE_KEY, true);
-        if (!cancelled && result && result.value) setGrid(JSON.parse(result.value));
-      } catch (e) {
-        // no data yet
-      } finally {
-        if (!cancelled) setLoaded(true);
-      }
-    })();
-    return () => { cancelled = true; };
+    const ref = db.ref(DATA_PATH);
+    const handler = ref.on('value', (snapshot) => {
+      setGrid(snapshot.val() || {});
+      setLoaded(true);
+      setConnected(true);
+    }, (err) => {
+      setError("Couldn't connect to Firebase. Check the config at the top of the file.");
+      setLoaded(true);
+    });
+    return () => ref.off('value', handler);
   }, []);
 
-  const persist = useCallback(async (nextGrid) => {
+  const cellKey = (name, day) => `${name}_${year}-${String(monthIdx+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+
+  const writeCount = async (key, count) => {
     setSaving(true);
     try {
-      const result = await window.storage.set(STORAGE_KEY, JSON.stringify(nextGrid), true);
-      setError(result ? null : "Save didn't go through. Try again.");
+      if (count <= 0) {
+        await db.ref(`${DATA_PATH}/${key}`).remove();
+      } else {
+        await db.ref(`${DATA_PATH}/${key}`).set(count);
+      }
+      setError(null);
     } catch (e) {
-      setError("Save failed. Your last change may not have stuck.");
+      setError("Save failed. Check your connection and try again.");
     } finally {
       setSaving(false);
     }
-  }, []);
-
-  const cellKey = (name, day) => `${name}|${year}-${String(monthIdx+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  };
 
   const addStar = (name, day) => {
     if (!unlocked) return;
     const key = cellKey(name, day);
     setPoppedKey(key + Date.now());
-    setGrid(prev => {
-      const next = { ...prev, [key]: Math.min((prev[key]||0) + 1, 9) };
-      persist(next);
-      return next;
-    });
+    const next = Math.min((grid[key]||0) + 1, 9);
+    writeCount(key, next);
   };
 
   const removeStar = (name, day) => {
     if (!unlocked) return;
     const key = cellKey(name, day);
-    setGrid(prev => {
-      const current = prev[key]||0;
-      if (current <= 0) return prev;
-      const next = { ...prev };
-      if (current - 1 <= 0) delete next[key];
-      else next[key] = current - 1;
-      persist(next);
-      return next;
-    });
+    const current = grid[key]||0;
+    if (current <= 0) return;
+    writeCount(key, current - 1);
   };
 
   const days = useMemo(() => {
@@ -317,6 +345,10 @@ function App(){
             'Month total: ', React.createElement('strong', {style:{color:'var(--gold)'}}, monthTotal), ' stars'
           ),
           saving && React.createElement('div', {style:{fontSize:'12px', color:'var(--gold)', fontWeight:600}}, 'Saving…'),
+          !saving && connected && React.createElement('div', {style:{fontSize:'11px', color:'#8a7f76', display:'flex', alignItems:'center', gap:'4px'}},
+            React.createElement('span', {style:{width:'6px', height:'6px', borderRadius:'50%', background:'#4caf50', display:'inline-block'}}),
+            'Live'
+          ),
           error && React.createElement('div', {style:{fontSize:'12px', color:'#e57373'}}, error)
         ),
         React.createElement(LockControl, {
@@ -397,7 +429,7 @@ function App(){
 
       React.createElement('div', {style:{marginTop:'14px', fontSize:'12px', color:'#a89c8e', display:'flex', alignItems:'center', gap:'6px'}},
         React.createElement(Leaf, {size:12}),
-        'Board is shared, everyone viewing this sees the same data and updates live for them on reload.'
+        'Board is shared, every computer viewing this page sees updates live as they happen.'
       )
     )
   );
@@ -429,3 +461,5 @@ const lockBtnStyle = {
 
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
 </script>
+</body>
+</html>
