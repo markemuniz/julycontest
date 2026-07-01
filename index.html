@@ -1,0 +1,430 @@
+<div id="root"></div>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  :root{
+    --bg:#0f0d0d;
+    --card:#fdf9f2;
+    --line:#e7ddc9;
+    --ink:#211a17;
+    --muted:#8a7f76;
+    --black:#161213;
+    --black-soft:#221b1c;
+    --red:#c81e2c;
+    --red-deep:#8c1420;
+    --gold:#e8b23d;
+    --gold-deep:#b3841f;
+    --empty:#eee4cf;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; }
+  #root {
+    font-family:'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  .display { font-family:'Bebas Neue', 'Inter', sans-serif; letter-spacing: 0.03em; }
+
+  @keyframes pop {
+    0% { transform: scale(1); }
+    35% { transform: scale(1.35) rotate(-6deg); }
+    65% { transform: scale(0.92) rotate(4deg); }
+    100% { transform: scale(1) rotate(0deg); }
+  }
+  .star-pop { animation: pop 0.35s ease; display:inline-block; }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+  }
+  .shake { animation: shake 0.35s ease; }
+
+  .perforation {
+    height: 0;
+    border-top: 2px dashed rgba(232,178,61,0.35);
+    position: relative;
+  }
+  .perforation::before, .perforation::after {
+    content: '';
+    position: absolute;
+    top: -8px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--bg);
+  }
+  .perforation::before { left: -8px; }
+  .perforation::after { right: -8px; }
+
+  ::-webkit-scrollbar { height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--red-deep); border-radius: 10px; }
+</style>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+const NAMES = ["Destiny","Dustin","Eve","Gio","Ian","Jaina","Kathy","Liv","Marcellus","Mic","Micaela","Michael","Nick","Owen","Paul","Rashad","Shiloh","Skye","Tamika","Will","Xavier","Zora"];
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const STORAGE_KEY = "review-contest:v1";
+const TROPHIES = ['🥇','🥈','🥉'];
+
+// Change this to whatever PIN managers should use to unlock editing.
+const EDIT_PIN = "SOHO2026";
+
+function daysInMonth(year, monthIdx){ return new Date(year, monthIdx+1, 0).getDate(); }
+function dayOfWeekLabel(year, monthIdx, day){
+  const d = new Date(year, monthIdx, day).getDay();
+  return ["S","M","T","W","T","F","S"][d];
+}
+
+function Leaf({ size=18, color='var(--gold)', style={} }){
+  return React.createElement('svg', {
+    width:size, height:size, viewBox:'0 0 64 64', style
+  },
+    React.createElement('path', {
+      fill: color,
+      d: "M32 6c1.5 6 2.5 12 2 18 4-4.5 8-8 13.5-10-2 5.5-5 10-9 13.5 6-1 11.5-1 17.5 1-5.5 3-11 4.5-17 4.5 5 3 9 7 12 12.5-6-1.5-11-4-15-8 1 5.5 0.5 11-1 16.5-2.5-5-4-10-4-15.5-1.5 5-4.5 9-9 12 0.5-5.5 2-10.5 4.5-15-4.5 3.5-10 5.5-16 6 3.5-5 8-9 13.5-11.5-6 0-11.5-1.5-16.5-4.5 6-2 11.5-2.5 17.5-1.5-4-3.5-7-8-9-13 5.5 2 9.5 5.5 13.5 10-1-6-0.5-12 1.5-18z",
+      transform: "translate(0,0) scale(0.6) translate(21,21)"
+    })
+  );
+}
+
+function LockControl({ unlocked, onUnlock, onLock }){
+  const [open, setOpen] = useState(false);
+  const [pin, setPin] = useState('');
+  const [wrong, setWrong] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (open && inputRef.current) inputRef.current.focus(); }, [open]);
+
+  const submit = () => {
+    if (pin === EDIT_PIN) {
+      onUnlock();
+      setOpen(false);
+      setPin('');
+      setWrong(false);
+    } else {
+      setWrong(true);
+      setPin('');
+      setTimeout(() => setWrong(false), 400);
+    }
+  };
+
+  if (unlocked) {
+    return React.createElement('button', {
+      onClick: onLock,
+      style: {...lockBtnStyle, background:'rgba(232,178,61,0.9)', color:'#3a2a04'}
+    }, '🔓 Editing on · tap to lock');
+  }
+
+  if (open) {
+    return React.createElement('div', {className: wrong ? 'shake' : '', style:{display:'flex', alignItems:'center', gap:'6px'}},
+      React.createElement('input', {
+        ref: inputRef,
+        type:'password',
+        value: pin,
+        onChange: e => setPin(e.target.value),
+        onKeyDown: e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') setOpen(false); },
+        placeholder:'PIN',
+        style:{width:'80px', padding:'5px 8px', borderRadius:'4px', border:'1px solid var(--gold)', background:'var(--black)', color:'#fff', fontSize:'13px'}
+      }),
+      React.createElement('button', {onClick: submit, style: lockBtnStyle}, 'Unlock'),
+      React.createElement('button', {onClick: () => setOpen(false), style:{...lockBtnStyle, background:'transparent', color:'#c9bfb3'}}, '✕')
+    );
+  }
+
+  return React.createElement('button', {
+    onClick: () => setOpen(true),
+    style: lockBtnStyle
+  }, '🔒 Locked · managers only');
+}
+
+function App(){
+  const now = new Date();
+  const [year, setYear] = useState(2026);
+  const [monthIdx, setMonthIdx] = useState(6);
+  const [grid, setGrid] = useState({});
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [sortByTotal, setSortByTotal] = useState(false);
+  const [error, setError] = useState(null);
+  const [poppedKey, setPoppedKey] = useState(null);
+  const [unlocked, setUnlocked] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await window.storage.get(STORAGE_KEY, true);
+        if (!cancelled && result && result.value) setGrid(JSON.parse(result.value));
+      } catch (e) {
+        // no data yet
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const persist = useCallback(async (nextGrid) => {
+    setSaving(true);
+    try {
+      const result = await window.storage.set(STORAGE_KEY, JSON.stringify(nextGrid), true);
+      setError(result ? null : "Save didn't go through. Try again.");
+    } catch (e) {
+      setError("Save failed. Your last change may not have stuck.");
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const cellKey = (name, day) => `${name}|${year}-${String(monthIdx+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+
+  const addStar = (name, day) => {
+    if (!unlocked) return;
+    const key = cellKey(name, day);
+    setPoppedKey(key + Date.now());
+    setGrid(prev => {
+      const next = { ...prev, [key]: Math.min((prev[key]||0) + 1, 9) };
+      persist(next);
+      return next;
+    });
+  };
+
+  const removeStar = (name, day) => {
+    if (!unlocked) return;
+    const key = cellKey(name, day);
+    setGrid(prev => {
+      const current = prev[key]||0;
+      if (current <= 0) return prev;
+      const next = { ...prev };
+      if (current - 1 <= 0) delete next[key];
+      else next[key] = current - 1;
+      persist(next);
+      return next;
+    });
+  };
+
+  const days = useMemo(() => {
+    const n = daysInMonth(year, monthIdx);
+    return Array.from({length:n}, (_,i) => i+1);
+  }, [year, monthIdx]);
+
+  const totals = useMemo(() => {
+    const t = {};
+    NAMES.forEach(name => {
+      let sum = 0;
+      days.forEach(day => { sum += grid[cellKey(name, day)] || 0; });
+      t[name] = sum;
+    });
+    return t;
+  }, [grid, days, year, monthIdx]);
+
+  const orderedNames = useMemo(() => {
+    if (!sortByTotal) return NAMES;
+    return [...NAMES].sort((a,b) => totals[b]-totals[a] || a.localeCompare(b));
+  }, [sortByTotal, totals]);
+
+  const rankedForTrophy = useMemo(() => {
+    const withTotals = NAMES.map(n => [n, totals[n]]).filter(([,v]) => v > 0);
+    withTotals.sort((a,b) => b[1]-a[1]);
+    const trophyMap = {};
+    withTotals.slice(0,3).forEach(([n], i) => { trophyMap[n] = TROPHIES[i]; });
+    return trophyMap;
+  }, [totals]);
+
+  const topThree = useMemo(() => {
+    const withTotals = NAMES.map(n => [n, totals[n]]).filter(([,v]) => v > 0);
+    withTotals.sort((a,b) => b[1]-a[1]);
+    return withTotals.slice(0,3);
+  }, [totals]);
+
+  const monthTotal = useMemo(() => Object.values(totals).reduce((a,b)=>a+b,0), [totals]);
+
+  const goPrevMonth = () => {
+    if (monthIdx === 0) { setMonthIdx(11); setYear(y=>y-1); }
+    else setMonthIdx(m=>m-1);
+  };
+  const goNextMonth = () => {
+    if (monthIdx === 11) { setMonthIdx(0); setYear(y=>y+1); }
+    else setMonthIdx(m=>m+1);
+  };
+
+  const todayMatch = (year === now.getFullYear() && monthIdx === now.getMonth());
+
+  if (!loaded) {
+    return React.createElement('div', {style:{padding:'60px', textAlign:'center', color:'var(--gold)', fontFamily:'Bebas Neue', fontSize:'20px', letterSpacing:'0.06em'}}, 'LOADING THE STAR BOARD…');
+  }
+
+  return React.createElement('div', {style:{maxWidth:'100%', paddingBottom:'40px'}},
+
+    // Banner
+    React.createElement('div', {style:{
+      background: 'linear-gradient(135deg, var(--black) 0%, var(--red-deep) 55%, var(--red) 100%)',
+      padding:'28px 24px 20px', color:'#fdf9f2', position:'relative', overflow:'hidden'
+    }},
+      React.createElement(Leaf, {size:140, color:'rgba(232,178,61,0.07)', style:{position:'absolute', right:'-20px', top:'-30px', transform:'rotate(12deg)'}}),
+      React.createElement('div', {style:{display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexWrap:'wrap', gap:'14px', position:'relative'}},
+        React.createElement('div', null,
+          React.createElement('div', {style:{display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', letterSpacing:'0.2em', textTransform:'uppercase', fontWeight:700, color:'var(--gold)'}},
+            React.createElement(Leaf, {size:13}),
+            'The Travel Agency · Review Contest',
+            React.createElement(Leaf, {size:13})
+          ),
+          React.createElement('h1', {className:'display', style:{margin:'4px 0 0', fontSize:'38px', color:'#fff'}}, 'SOHO STAR BOARD')
+        ),
+        React.createElement('div', {style:{display:'flex', alignItems:'center', gap:'10px', background:'rgba(0,0,0,0.35)', padding:'6px 10px', borderRadius:'6px', border:'1px solid rgba(232,178,61,0.4)'}},
+          React.createElement('button', {onClick: goPrevMonth, style: navBtnStyle}, '←'),
+          React.createElement('div', {className:'display', style:{fontSize:'19px', minWidth:'150px', textAlign:'center', color:'var(--gold)'}}, `${MONTH_NAMES[monthIdx]} ${year}`.toUpperCase()),
+          React.createElement('button', {onClick: goNextMonth, style: navBtnStyle}, '→')
+        )
+      ),
+
+      // top 3 as boarding-pass stubs
+      topThree.length > 0 && React.createElement('div', {style:{display:'flex', gap:'10px', marginTop:'20px', flexWrap:'wrap', position:'relative'}},
+        topThree.map(([name, total], i) =>
+          React.createElement('div', {key:name, style:{
+            background:'var(--black-soft)', color:'#fdf9f2', borderRadius:'6px',
+            padding:'8px 14px', display:'flex', alignItems:'center', gap:'8px',
+            borderLeft:'4px solid var(--gold)', boxShadow:'0 4px 14px rgba(0,0,0,0.4)', fontWeight:700
+          }},
+            React.createElement('span', {style:{fontSize:'18px'}}, TROPHIES[i]),
+            React.createElement('span', {className:'display', style:{fontSize:'16px', letterSpacing:'0.02em'}}, name.toUpperCase()),
+            React.createElement('span', {style:{color:'var(--gold)', fontWeight:800}}, total)
+          )
+        )
+      )
+    ),
+
+    React.createElement('div', {className:'perforation'}),
+
+    React.createElement('div', {style:{padding:'20px 20px 0'}},
+
+      React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'16px', marginBottom:'14px', flexWrap:'wrap'}},
+        React.createElement('div', {style:{display:'flex', alignItems:'center', gap:'16px', flexWrap:'wrap'}},
+          React.createElement('label', {style:{display:'flex', alignItems:'center', gap:'6px', fontSize:'13px', cursor:'pointer', userSelect:'none', background:'var(--black-soft)', color:'#fdf9f2', border:'1px solid var(--red-deep)', padding:'6px 10px', borderRadius:'6px'}},
+            React.createElement('input', {type:'checkbox', checked:sortByTotal, onChange:e=>setSortByTotal(e.target.checked)}),
+            '🏆 Sort by total stars'
+          ),
+          React.createElement('div', {style:{fontSize:'13px', color:'#c9bfb3'}},
+            'Month total: ', React.createElement('strong', {style:{color:'var(--gold)'}}, monthTotal), ' stars'
+          ),
+          saving && React.createElement('div', {style:{fontSize:'12px', color:'var(--gold)', fontWeight:600}}, 'Saving…'),
+          error && React.createElement('div', {style:{fontSize:'12px', color:'#e57373'}}, error)
+        ),
+        React.createElement(LockControl, {
+          unlocked,
+          onUnlock: () => setUnlocked(true),
+          onLock: () => setUnlocked(false)
+        })
+      ),
+
+      // grid
+      React.createElement('div', {style:{overflowX:'auto', border:'1px solid var(--red-deep)', borderRadius:'10px', background:'var(--card)', boxShadow:'0 6px 24px rgba(0,0,0,0.35)'}},
+        React.createElement('table', {style:{borderCollapse:'separate', borderSpacing:0, width:'100%'}},
+          React.createElement('thead', null,
+            React.createElement('tr', null,
+              React.createElement('th', {style:{...thStyle, position:'sticky', left:0, zIndex:3, background:'var(--black)', minWidth:'140px', textAlign:'left', paddingLeft:'16px'}}, 'NAME'),
+              days.map(day => {
+                const isToday = todayMatch && day === now.getDate();
+                return React.createElement('th', {
+                  key: day,
+                  style: {...thStyle, background: isToday ? 'var(--red)' : 'var(--red-deep)', minWidth:'42px'}
+                },
+                  React.createElement('div', {style:{fontSize:'9px', opacity:0.8, fontWeight:600}}, dayOfWeekLabel(year, monthIdx, day)),
+                  React.createElement('div', {className:'display', style:{fontSize:'15px'}}, day)
+                );
+              }),
+              React.createElement('th', {style:{...thStyle, background:'var(--gold)', color:'#3a2a04', minWidth:'60px'}}, 'TOTAL')
+            )
+          ),
+          React.createElement('tbody', null,
+            orderedNames.map((name, idx) => {
+              const total = totals[name];
+              const trophy = rankedForTrophy[name];
+              return React.createElement('tr', {key:name, style:{background: idx % 2 === 0 ? '#fdf9f2' : '#f7efdc'}},
+                React.createElement('td', {
+                  style:{...tdNameStyle, position:'sticky', left:0, zIndex:2, background: idx % 2 === 0 ? '#fdf9f2' : '#f7efdc', borderRight:'2px solid var(--line)'}
+                },
+                  trophy && React.createElement('span', {style:{marginRight:'6px'}}, trophy),
+                  name
+                ),
+                days.map(day => {
+                  const key = cellKey(name, day);
+                  const count = grid[key] || 0;
+                  const isToday = todayMatch && day === now.getDate();
+                  const isPopped = poppedKey && poppedKey.startsWith(key);
+                  return React.createElement('td', {
+                    key: day,
+                    style: {
+                      ...tdCellStyle,
+                      background: isToday ? '#fbe9ea' : 'transparent',
+                      position:'relative'
+                    }
+                  },
+                    React.createElement('div', {
+                      onClick: () => addStar(name, day),
+                      style:{cursor: unlocked ? 'pointer' : 'default', minHeight:'22px', display:'flex', alignItems:'center', justifyContent:'center'}
+                    },
+                      count === 0
+                        ? React.createElement('span', {style:{color:'var(--empty)', fontSize:'16px'}}, '·')
+                        : count <= 3
+                          ? React.createElement('span', {className: isPopped ? 'star-pop' : '', style:{fontSize:'14px', letterSpacing:'-1px', color:'var(--gold-deep)'}}, '★'.repeat(count))
+                          : React.createElement('span', {className: isPopped ? 'star-pop' : '', style:{fontSize:'12px', fontWeight:800, color:'#fff', background:'var(--red)', borderRadius:'8px', padding:'2px 6px'}}, `★×${count}`)
+                    ),
+                    unlocked && count > 0 && React.createElement('button', {
+                      onClick: (e) => { e.stopPropagation(); removeStar(name, day); },
+                      title: 'Remove one star',
+                      style: removeBtnStyle
+                    }, '✕')
+                  );
+                }),
+                React.createElement('td', {style:{...tdCellStyle, fontWeight:800, background: idx % 2 === 0 ? '#fbe9ba' : '#f6dfa0'}},
+                  React.createElement('span', {className:'display', style:{fontSize:'15px'}}, total)
+                )
+              );
+            })
+          )
+        )
+      ),
+
+      React.createElement('div', {style:{marginTop:'14px', fontSize:'12px', color:'#a89c8e', display:'flex', alignItems:'center', gap:'6px'}},
+        React.createElement(Leaf, {size:12}),
+        'Board is shared, everyone viewing this sees the same data and updates live for them on reload.'
+      )
+    )
+  );
+}
+
+const navBtnStyle = {
+  border:'none', background:'rgba(232,178,61,0.15)', borderRadius:'4px',
+  width:'26px', height:'26px', cursor:'pointer', fontSize:'13px', color:'var(--gold)', fontWeight:700
+};
+const thStyle = {
+  padding:'12px 4px', fontSize:'11px', textAlign:'center', fontWeight:700, color:'#fdf9f2'
+};
+const tdNameStyle = {
+  padding:'10px 16px', fontSize:'13px', fontWeight:700, whiteSpace:'nowrap'
+};
+const tdCellStyle = {
+  padding:'8px 4px', textAlign:'center', borderBottom:'1px solid #ece0c8', borderRight:'1px solid #f1e6cf',
+  userSelect:'none'
+};
+const removeBtnStyle = {
+  position:'absolute', top:'1px', right:'1px', width:'15px', height:'15px', borderRadius:'50%',
+  border:'none', background:'rgba(33,26,23,0.15)', color:'var(--ink)', fontSize:'8px', lineHeight:'15px',
+  cursor:'pointer', padding:0
+};
+const lockBtnStyle = {
+  border:'1px solid var(--gold)', background:'var(--black-soft)', color:'var(--gold)',
+  borderRadius:'6px', padding:'6px 12px', fontSize:'12px', fontWeight:700, cursor:'pointer'
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
