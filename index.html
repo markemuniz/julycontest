@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <link rel="icon" type="image/png" href="favicon.png"></head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Google Contest</title>
@@ -297,17 +296,19 @@ function App(){
     // Banner
     React.createElement('div', {style:{
       background: 'linear-gradient(135deg, var(--black) 0%, var(--red-deep) 55%, var(--red) 100%)',
-      padding:'28px 24px 20px', color:'#fdf9f2', position:'relative', overflow:'hidden'
+      padding:'28px 24px 20px', color:'#fdf9f2', position:'relative'
     }},
-      React.createElement(Leaf, {size:140, color:'rgba(232,178,61,0.07)', style:{position:'absolute', right:'-20px', top:'-30px', transform:'rotate(12deg)'}}),
+      React.createElement('div', {style:{position:'absolute', inset:0, overflow:'hidden', pointerEvents:'none'}},
+        React.createElement(Leaf, {size:140, color:'rgba(232,178,61,0.07)', style:{position:'absolute', right:'-20px', top:'-30px', transform:'rotate(12deg)'}})
+      ),
       React.createElement('div', {style:{display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexWrap:'wrap', gap:'14px', position:'relative'}},
         React.createElement('div', null,
           React.createElement('div', {style:{display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', letterSpacing:'0.2em', textTransform:'uppercase', fontWeight:700, color:'var(--gold)'}},
             React.createElement(Leaf, {size:13}),
-            'The Travel Agency · Review Contest',
+            'The Travel Agency · Google Review Contest',
             React.createElement(Leaf, {size:13})
           ),
-          React.createElement('h1', {className:'display', style:{margin:'4px 0 0', fontSize:'38px', color:'#fff'}}, 'SOHO STAR BOARD')
+          React.createElement('h1', {className:'display', style:{margin:'6px 0 0', fontSize:'38px', lineHeight:1.25, paddingTop:'4px', color:'#fff'}}, 'SOHO STAR BOARD')
         ),
         React.createElement('div', {style:{display:'flex', alignItems:'center', gap:'10px', background:'rgba(0,0,0,0.35)', padding:'6px 10px', borderRadius:'6px', border:'1px solid rgba(232,178,61,0.4)'}},
           React.createElement('button', {onClick: goPrevMonth, style: navBtnStyle}, '←'),
@@ -464,4 +465,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
-
