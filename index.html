@@ -148,6 +148,21 @@ function compressImageFile(file, maxDim = 900, quality = 0.72){
   });
 }
 
+function StarIcon({ size=18, style={} }){
+  return React.createElement('svg', {
+    width:size, height:size, viewBox:'0 0 24 24',
+    style:{display:'inline-block', filter:'drop-shadow(0 1px 1.5px rgba(0,0,0,0.45))', flexShrink:0, ...style}
+  },
+    React.createElement('path', {
+      d:'M12 2 14.9 8.6 22 9.3 16.5 13.9 18.2 21 12 17.3 5.8 21 7.5 13.9 2 9.3 9.1 8.6 12 2Z',
+      fill:'url(#ttaStarGrad)',
+      stroke:'#7a4a00',
+      strokeWidth:'1',
+      strokeLinejoin:'round'
+    })
+  );
+}
+
 function Leaf({ size=18, color='var(--gold)', style={} }){
   return React.createElement('svg', {
     width:size, height:size, viewBox:'0 0 64 64', style
@@ -412,6 +427,17 @@ function App(){
 
   return React.createElement('div', {style:{maxWidth:'100%', paddingBottom:'40px'}},
 
+    // Hidden shared gradient definition, referenced by every StarIcon.
+    React.createElement('svg', {width:0, height:0, style:{position:'absolute'}},
+      React.createElement('defs', null,
+        React.createElement('linearGradient', {id:'ttaStarGrad', x1:'0%', y1:'0%', x2:'0%', y2:'100%'},
+          React.createElement('stop', {offset:'0%', stopColor:'#fff3c4'}),
+          React.createElement('stop', {offset:'45%', stopColor:'#ffc93d'}),
+          React.createElement('stop', {offset:'100%', stopColor:'#d98c00'})
+        )
+      )
+    ),
+
     // Banner
     React.createElement('div', {style:{
       background: 'linear-gradient(135deg, var(--black) 0%, var(--red-deep) 55%, var(--red) 100%)',
@@ -529,8 +555,18 @@ function App(){
                       count === 0
                         ? React.createElement('span', {style:{color:'var(--empty)', fontSize:'16px'}}, '·')
                         : count <= 3
-                          ? React.createElement('span', {className: isPopped ? 'star-pop' : '', style:{fontSize:'14px', letterSpacing:'-1px', color:'var(--gold-deep)'}}, '★'.repeat(count))
-                          : React.createElement('span', {className: isPopped ? 'star-pop' : '', style:{fontSize:'12px', fontWeight:800, color:'#fff', background:'var(--red)', borderRadius:'8px', padding:'2px 6px'}}, `★×${count}`)
+                          ? React.createElement('span', {className: isPopped ? 'star-pop' : '', style:{display:'inline-flex', alignItems:'center', gap:'1px'}},
+                              Array.from({length: count}).map((_, si) => React.createElement(StarIcon, {key: si, size: 17}))
+                            )
+                          : React.createElement('span', {className: isPopped ? 'star-pop' : '', style:{
+                              display:'inline-flex', alignItems:'center', gap:'3px',
+                              fontSize:'12px', fontWeight:900, color:'#fff9e6',
+                              background:'linear-gradient(160deg, #ff5a63, var(--red) 60%, var(--red-deep))',
+                              borderRadius:'8px', padding:'3px 7px 3px 5px', boxShadow:'0 0 8px rgba(200,30,44,0.6)'
+                            }},
+                              React.createElement(StarIcon, {size: 12}),
+                              `×${count}`
+                            )
                     ),
                     unlocked && count > 0 && React.createElement('button', {
                       onClick: (e) => { e.stopPropagation(); removeStar(name, day); },
