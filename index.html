@@ -342,12 +342,14 @@ function App(){
     }
   };
 
-  const savePosition = async (name, xPct, yPx) => {
+  const savePosition = async (name, xPct, yPx, scale) => {
     try {
-      await db.ref(`${ORDER_PATH}/${name}`).set({ xPct, yPx });
+      const payload = { xPct, yPx };
+      if (typeof scale === 'number') payload.scale = scale;
+      await db.ref(`${ORDER_PATH}/${name}`).set(payload);
       setError(null);
     } catch (e) {
-      setError("Couldn't save the pin position. Check your connection and try again.");
+      setError("Couldn't save the card. Check your connection and try again.");
     }
   };
 
@@ -595,6 +597,8 @@ function App(){
 }
 
 const CARD_WIDTH = 780;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 2.5;
 
 // Deterministic slight tilt per name so cards look hand-pinned, without
 // having to store a rotation value in the database.
@@ -621,19 +625,34 @@ function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositi
   const [uploadingFor, setUploadingFor] = useState(null);
   const [dragName, setDragName] = useState(null);
   const [livePos, setLivePos] = useState(null); // { leftPx, topPx } while actively dragging
+  const [resizeName, setResizeName] = useState(null);
+  const [liveScale, setLiveScale] = useState(null); // number while actively resizing
   const fileInputRefs = useRef({});
   const boardRef = useRef(null);
   const dragOffsetRef = useRef({ offsetX: 0, offsetY: 0 });
   const livePosRef = useRef(null);
   const dragNameRef = useRef(null);
+  const positionsRef = useRef(positions);
+  const resizeStartRef = useRef({ startX: 0, startScale: 1 });
+  const liveScaleRef = useRef(null);
+  const resizeNameRef = useRef(null);
 
   useEffect(() => { livePosRef.current = livePos; }, [livePos]);
   useEffect(() => { dragNameRef.current = dragName; }, [dragName]);
+  useEffect(() => { positionsRef.current = positions; }, [positions]);
+  useEffect(() => { liveScaleRef.current = liveScale; }, [liveScale]);
+  useEffect(() => { resizeNameRef.current = resizeName; }, [resizeName]);
 
   const getPosition = (name, index) => {
     const saved = positions[name];
     if (saved && typeof saved.xPct === 'number' && typeof saved.yPx === 'number') return saved;
     return defaultBoardPosition(index);
+  };
+
+  const getScale = (name) => {
+    const saved = positions[name];
+    const s = saved && typeof saved.scale === 'number' ? saved.scale : 1;
+    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
   };
 
   // Pointer/touch based freeform dragging, so a card can be tacked down
@@ -686,7 +705,8 @@ function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositi
       if (board && pos && name) {
         const boardRect = board.getBoundingClientRect();
         const xPct = (pos.leftPx / boardRect.width) * 100;
-        onSavePosition(name, xPct, Math.round(pos.topPx));
+        const existingScale = positionsRef.current[name] && positionsRef.current[name].scale;
+        onSavePosition(name, xPct, Math.round(pos.topPx), existingScale);
       }
       setDragName(null);
       setLivePos(null);
@@ -705,6 +725,64 @@ function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositi
       window.removeEventListener('touchend', finishDrag);
     };
   }, [dragName, onSavePosition]);
+
+  // Corner-drag resizing. Dragging right/down grows the card, left/up
+  // shrinks it, everything inside scales together since it's a CSS
+  // transform on the whole note card.
+  const startResize = (name, e) => {
+    if (e.cancelable) e.preventDefault();
+    e.stopPropagation();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const startScale = getScale(name);
+    resizeStartRef.current = { startX: clientX, startScale };
+    setResizeName(name);
+    setLiveScale(startScale);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'nwse-resize';
+  };
+
+  useEffect(() => {
+    if (!resizeName) return;
+
+    const getClientX = (e) => (e.touches && e.touches[0] ? e.touches[0].clientX : e.clientX);
+
+    const handleMove = (e) => {
+      if (e.cancelable) e.preventDefault();
+      const clientX = getClientX(e);
+      const delta = clientX - resizeStartRef.current.startX;
+      let next = resizeStartRef.current.startScale + delta / CARD_WIDTH;
+      next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, next));
+      setLiveScale(next);
+    };
+
+    const finishResize = () => {
+      const name = resizeNameRef.current;
+      const scale = liveScaleRef.current;
+      if (name && scale != null) {
+        const existing = positionsRef.current[name];
+        const idx = leaderboard.findIndex(([n]) => n === name);
+        const fallback = defaultBoardPosition(idx === -1 ? 0 : idx);
+        const xPct = existing && typeof existing.xPct === 'number' ? existing.xPct : fallback.xPct;
+        const yPx = existing && typeof existing.yPx === 'number' ? existing.yPx : fallback.yPx;
+        onSavePosition(name, xPct, yPx, scale);
+      }
+      setResizeName(null);
+      setLiveScale(null);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', finishResize);
+    window.addEventListener('touchmove', handleMove, { passive: false });
+    window.addEventListener('touchend', finishResize);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', finishResize);
+      window.removeEventListener('touchmove', handleMove);
+      window.removeEventListener('touchend', finishResize);
+    };
+  }, [resizeName, onSavePosition, leaderboard]);
 
   const setImageForName = (name, file) => {
     if (!file) return;
@@ -772,10 +850,11 @@ function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositi
     let maxBottom = 420;
     leaderboard.forEach(([name], index) => {
       const pos = (dragName === name && livePos) ? { yPx: livePos.topPx } : getPosition(name, index);
-      maxBottom = Math.max(maxBottom, pos.yPx + 820);
+      const scale = (resizeName === name && liveScale != null) ? liveScale : getScale(name);
+      maxBottom = Math.max(maxBottom, pos.yPx + 820 * scale);
     });
     return maxBottom;
-  }, [leaderboard, positions, dragName, livePos]);
+  }, [leaderboard, positions, dragName, livePos, resizeName, liveScale]);
 
   return React.createElement('div', {style:{marginTop:'34px'}},
 
@@ -816,12 +895,14 @@ function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositi
             const nameQuotes = quotes[name] ? Object.entries(quotes[name]) : [];
             const isTop = total === leaderboard[0][1];
             const isDragging = dragName === name;
+            const isResizing = resizeName === name;
             const pos = isDragging && livePos ? livePos : (() => {
               const p = getPosition(name, i);
               return { leftPx: null, topPx: p.yPx, xPct: p.xPct };
             })();
             const leftStyle = isDragging && livePos ? `${livePos.leftPx}px` : `${pos.xPct}%`;
-            const rotation = isDragging ? 0 : pinRotation(name);
+            const rotation = (isDragging || isResizing) ? 0 : pinRotation(name);
+            const effScale = isResizing && liveScale != null ? liveScale : getScale(name);
 
             return React.createElement('div', {
               key: name,
@@ -830,9 +911,10 @@ function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositi
                 left: leftStyle,
                 top: `${pos.topPx}px`,
                 width: `${CARD_WIDTH}px`,
-                transform: `rotate(${rotation}deg) ${isDragging ? 'scale(1.03)' : 'scale(1)'}`,
-                transition: isDragging ? 'none' : 'left 0.2s ease, top 0.2s ease',
-                zIndex: isDragging ? 50 : (isTop ? 3 : 2)
+                transform: `rotate(${rotation}deg) scale(${effScale * (isDragging ? 1.03 : 1)})`,
+                transformOrigin: 'top left',
+                transition: (isDragging || isResizing) ? 'none' : 'left 0.2s ease, top 0.2s ease',
+                zIndex: (isDragging || isResizing) ? 50 : (isTop ? 3 : 2)
               }
             },
               // Pushpin, sticking out above the card.
@@ -854,6 +936,7 @@ function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositi
 
               React.createElement('div', {
                 style:{
+                  position:'relative',
                   background: 'var(--card)',
                   border: `1px solid ${isTop ? 'var(--gold-deep)' : 'var(--line)'}`,
                   borderRadius:'12px',
@@ -981,6 +1064,25 @@ function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositi
                           background:'transparent', border:'1px dashed var(--gold-deep)', color:'var(--gold-deep)'
                         }
                       }, '+ Add review quote')
+                ),
+
+                unlocked && React.createElement('div', {
+                  onMouseDown: (e) => startResize(name, e),
+                  onTouchStart: (e) => startResize(name, e),
+                  title: 'Drag to resize',
+                  style:{
+                    position:'absolute', bottom:'6px', right:'6px',
+                    width:'22px', height:'22px', cursor:'nwse-resize', touchAction:'none',
+                    display:'flex', alignItems:'flex-end', justifyContent:'flex-end',
+                    padding:'4px'
+                  }
+                },
+                  React.createElement('svg', {width:14, height:14, viewBox:'0 0 14 14'},
+                    React.createElement('path', {
+                      d:'M13 1 1 13 M13 6 6 13 M13 11 11 13',
+                      stroke: 'var(--gold-deep)', strokeWidth:'2', strokeLinecap:'round'
+                    })
+                  )
                 )
               )
             );
