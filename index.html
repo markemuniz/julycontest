@@ -99,6 +99,8 @@
   // Data lives under this path, change it if you want to reuse one Firebase
   // project across multiple TTA tools without them colliding.
   const DATA_PATH = "reviewContestSoho/grid";
+  const QUOTES_PATH = "reviewContestSoho/quotes";
+  const ORDER_PATH = "reviewContestSoho/leaderboardPositions";
 </script>
 
 <script type="text/babel">
@@ -115,6 +117,35 @@ function daysInMonth(year, monthIdx){ return new Date(year, monthIdx+1, 0).getDa
 function dayOfWeekLabel(year, monthIdx, day){
   const d = new Date(year, monthIdx, day).getDay();
   return ["S","M","T","W","T","F","S"][d];
+}
+
+// Shrinks a pasted/uploaded screenshot down to a reasonable size and returns
+// a base64 data URL, so it can be stored directly alongside the quote text
+// in the Realtime Database (avoids needing separate Firebase Storage rules).
+function compressImageFile(file, maxDim = 900, quality = 0.72){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the image file.'));
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Could not load the image.'));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function Leaf({ size=18, color='var(--gold)', style={} }){
@@ -184,6 +215,8 @@ function App(){
   const [year, setYear] = useState(2026);
   const [monthIdx, setMonthIdx] = useState(6);
   const [grid, setGrid] = useState({});
+  const [quotes, setQuotes] = useState({});
+  const [positions, setPositions] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sortByTotal, setSortByTotal] = useState(false);
@@ -203,6 +236,25 @@ function App(){
     }, (err) => {
       setError("Couldn't connect to Firebase. Check the config at the top of the file.");
       setLoaded(true);
+    });
+    return () => ref.off('value', handler);
+  }, []);
+
+  // Live listener for review quotes tied to the leaderboard.
+  useEffect(() => {
+    const ref = db.ref(QUOTES_PATH);
+    const handler = ref.on('value', (snapshot) => {
+      setQuotes(snapshot.val() || {});
+    });
+    return () => ref.off('value', handler);
+  }, []);
+
+  // Live listener for pinned card positions on the bulletin board, so
+  // dragging a card on one device shows up on every other device too.
+  useEffect(() => {
+    const ref = db.ref(ORDER_PATH);
+    const handler = ref.on('value', (snapshot) => {
+      setPositions(snapshot.val() || {});
     });
     return () => ref.off('value', handler);
   }, []);
@@ -241,6 +293,61 @@ function App(){
     writeCount(key, current - 1);
   };
 
+  const addQuote = async (name, text, imageFile) => {
+    const trimmed = (text || '').trim();
+    if (!trimmed && !imageFile) return;
+    setSaving(true);
+    try {
+      let imageData = null;
+      if (imageFile) {
+        imageData = await compressImageFile(imageFile);
+      }
+      const payload = { addedAt: Date.now() };
+      if (trimmed) payload.text = trimmed;
+      if (imageData) payload.imageData = imageData;
+      await db.ref(`${QUOTES_PATH}/${name}`).push(payload);
+      setError(null);
+    } catch (e) {
+      setError("Couldn't save the quote. Check your connection and try again.");
+      throw e;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeQuote = async (name, quoteKey) => {
+    setSaving(true);
+    try {
+      await db.ref(`${QUOTES_PATH}/${name}/${quoteKey}`).remove();
+      setError(null);
+    } catch (e) {
+      setError("Couldn't remove the quote. Check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savePosition = async (name, xPct, yPx) => {
+    try {
+      await db.ref(`${ORDER_PATH}/${name}`).set({ xPct, yPx });
+      setError(null);
+    } catch (e) {
+      setError("Couldn't save the pin position. Check your connection and try again.");
+    }
+  };
+
+  const resetPositions = async () => {
+    setSaving(true);
+    try {
+      await db.ref(ORDER_PATH).remove();
+      setError(null);
+    } catch (e) {
+      setError("Couldn't reset the board. Check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const days = useMemo(() => {
     const n = daysInMonth(year, monthIdx);
     return Array.from({length:n}, (_,i) => i+1);
@@ -274,6 +381,17 @@ function App(){
     withTotals.sort((a,b) => b[1]-a[1]);
     return withTotals.slice(0,3);
   }, [totals]);
+
+  // Full leaderboard for this month, everyone with at least one star, ranked.
+  // Rank is still based on stars, it's just used for the badge, the pin
+  // position on the board is independent of this order.
+  const leaderboard = useMemo(() => {
+    const withTotals = NAMES.map(n => [n, totals[n]]).filter(([,v]) => v > 0);
+    withTotals.sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0]));
+    return withTotals;
+  }, [totals]);
+
+  const hasCustomPositions = Object.keys(positions).length > 0;
 
   const monthTotal = useMemo(() => Object.values(totals).reduce((a,b)=>a+b,0), [totals]);
 
@@ -430,11 +548,408 @@ function App(){
         )
       ),
 
-      React.createElement('div', {style:{marginTop:'14px', fontSize:'12px', color:'#a89c8e', display:'flex', alignItems:'center', gap:'6px'}},
-        React.createElement(Leaf, {size:12}),
-        'Board is shared, every computer viewing this page sees updates live as they happen.'
-      )
+      // Leaderboard section with review quotes
+      React.createElement(Leaderboard, {
+        leaderboard, quotes, positions, unlocked, hasCustomPositions,
+        onAddQuote: addQuote, onRemoveQuote: removeQuote,
+        onSavePosition: savePosition, onResetPositions: resetPositions
+      })
     )
+  );
+}
+
+const CARD_WIDTH = 780;
+
+// Deterministic slight tilt per name so cards look hand-pinned, without
+// having to store a rotation value in the database.
+function pinRotation(name){
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) % 1000;
+  return (hash % 7) - 3; // -3..3 degrees
+}
+
+// Cascading fallback grid position (percent x, px y) for anyone who hasn't
+// been dragged to a spot yet, so cards don't all start stacked on top of
+// each other.
+function defaultBoardPosition(index){
+  const perRow = 1;
+  const col = index % perRow;
+  const row = Math.floor(index / perRow);
+  return { xPct: 2 + col * 50, yPx: 24 + row * 780 };
+}
+
+function Leaderboard({ leaderboard, quotes, positions, unlocked, hasCustomPositions, onAddQuote, onRemoveQuote, onSavePosition, onResetPositions }){
+  const [draftText, setDraftText] = useState({});
+  const [draftImage, setDraftImage] = useState({}); // { [name]: { file, previewUrl } }
+  const [openAddFor, setOpenAddFor] = useState(null);
+  const [uploadingFor, setUploadingFor] = useState(null);
+  const [dragName, setDragName] = useState(null);
+  const [livePos, setLivePos] = useState(null); // { leftPx, topPx } while actively dragging
+  const fileInputRefs = useRef({});
+  const boardRef = useRef(null);
+  const dragOffsetRef = useRef({ offsetX: 0, offsetY: 0 });
+  const livePosRef = useRef(null);
+  const dragNameRef = useRef(null);
+
+  useEffect(() => { livePosRef.current = livePos; }, [livePos]);
+  useEffect(() => { dragNameRef.current = dragName; }, [dragName]);
+
+  const getPosition = (name, index) => {
+    const saved = positions[name];
+    if (saved && typeof saved.xPct === 'number' && typeof saved.yPx === 'number') return saved;
+    return defaultBoardPosition(index);
+  };
+
+  // Pointer/touch based freeform dragging, so a card can be tacked down
+  // literally anywhere on the board, not just swapped with a neighbor.
+  const startDrag = (name, index, e) => {
+    if (e.cancelable) e.preventDefault();
+    const board = boardRef.current;
+    if (!board) return;
+    const boardRect = board.getBoundingClientRect();
+    const pos = getPosition(name, index);
+    const currentLeftPx = (pos.xPct / 100) * boardRect.width;
+    const currentTopPx = pos.yPx;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    dragOffsetRef.current = {
+      offsetX: clientX - (boardRect.left + currentLeftPx),
+      offsetY: clientY - (boardRect.top + currentTopPx)
+    };
+    setDragName(name);
+    setLivePos({ leftPx: currentLeftPx, topPx: currentTopPx });
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
+  };
+
+  useEffect(() => {
+    if (!dragName) return;
+
+    const getClient = (e) => {
+      const t = e.touches && e.touches[0];
+      return { x: t ? t.clientX : e.clientX, y: t ? t.clientY : e.clientY };
+    };
+
+    const handleMove = (e) => {
+      if (e.cancelable) e.preventDefault();
+      const board = boardRef.current;
+      if (!board) return;
+      const boardRect = board.getBoundingClientRect();
+      const { x, y } = getClient(e);
+      let leftPx = x - boardRect.left - dragOffsetRef.current.offsetX;
+      let topPx = y - boardRect.top - dragOffsetRef.current.offsetY;
+      leftPx = Math.max(0, Math.min(leftPx, boardRect.width - CARD_WIDTH));
+      topPx = Math.max(0, topPx);
+      setLivePos({ leftPx, topPx });
+    };
+
+    const finishDrag = () => {
+      const board = boardRef.current;
+      const pos = livePosRef.current;
+      const name = dragNameRef.current;
+      if (board && pos && name) {
+        const boardRect = board.getBoundingClientRect();
+        const xPct = (pos.leftPx / boardRect.width) * 100;
+        onSavePosition(name, xPct, Math.round(pos.topPx));
+      }
+      setDragName(null);
+      setLivePos(null);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', finishDrag);
+    window.addEventListener('touchmove', handleMove, { passive: false });
+    window.addEventListener('touchend', finishDrag);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', finishDrag);
+      window.removeEventListener('touchmove', handleMove);
+      window.removeEventListener('touchend', finishDrag);
+    };
+  }, [dragName, onSavePosition]);
+
+  const setImageForName = (name, file) => {
+    if (!file) return;
+    const previewUrl = URL.createObjectURL(file);
+    setDraftImage(prev => {
+      const existing = prev[name];
+      if (existing && existing.previewUrl) URL.revokeObjectURL(existing.previewUrl);
+      return {...prev, [name]: { file, previewUrl }};
+    });
+  };
+
+  const clearImageForName = (name) => {
+    setDraftImage(prev => {
+      const existing = prev[name];
+      if (existing && existing.previewUrl) URL.revokeObjectURL(existing.previewUrl);
+      const next = {...prev};
+      delete next[name];
+      return next;
+    });
+  };
+
+  const handlePaste = (e, name) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          setImageForName(name, file);
+          e.preventDefault();
+        }
+        break;
+      }
+    }
+  };
+
+  const handleFilePicked = (e, name) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) setImageForName(name, file);
+    e.target.value = '';
+  };
+
+  const handleAdd = async (name) => {
+    const text = draftText[name] || '';
+    const image = draftImage[name];
+    if (!text.trim() && !image) return;
+    setUploadingFor(name);
+    try {
+      await onAddQuote(name, text, image ? image.file : undefined);
+      setDraftText(prev => ({...prev, [name]: ''}));
+      clearImageForName(name);
+      setOpenAddFor(null);
+    } catch (e) {
+      // Save failed, leave the draft text/image in place so nothing is lost.
+      // The shared error banner above the leaderboard explains what happened.
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  // Board height grows to fit whatever is pinned lowest, so cards never
+  // get clipped off the bottom of the corkboard.
+  const boardMinHeight = useMemo(() => {
+    let maxBottom = 420;
+    leaderboard.forEach(([name], index) => {
+      const pos = (dragName === name && livePos) ? { yPx: livePos.topPx } : getPosition(name, index);
+      maxBottom = Math.max(maxBottom, pos.yPx + 820);
+    });
+    return maxBottom;
+  }, [leaderboard, positions, dragName, livePos]);
+
+  return React.createElement('div', {style:{marginTop:'34px'}},
+
+    React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', flexWrap:'wrap', marginBottom:'16px'}},
+      React.createElement('div', {style:{display:'flex', alignItems:'center', gap:'10px'}},
+        React.createElement(Leaf, {size:16}),
+        React.createElement('h2', {className:'display', style:{margin:0, fontSize:'26px', color:'var(--gold)', letterSpacing:'0.04em'}}, 'REVIEW LEADERBOARD'),
+        React.createElement(Leaf, {size:16})
+      ),
+      unlocked && hasCustomPositions && React.createElement('button', {
+        onClick: onResetPositions,
+        style:{...lockBtnStyle, padding:'5px 10px', fontSize:'11px', background:'transparent'}
+      }, '↺ Reset board layout')
+    ),
+
+    leaderboard.length === 0
+      ? React.createElement('div', {style:{color:'#a89c8e', fontSize:'13px', padding:'20px 0'}}, 'No stars logged yet this month.')
+      : React.createElement('div', {
+          ref: boardRef,
+          style:{
+            position:'relative',
+            width:'100%',
+            minHeight: `${boardMinHeight}px`,
+            borderRadius:'12px',
+            border:'1px solid rgba(232,178,61,0.3)',
+            background: `
+              radial-gradient(rgba(0,0,0,0.18) 1px, transparent 1.5px),
+              radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1.5px),
+              linear-gradient(160deg, #7a5330 0%, #6b4526 100%)
+            `,
+            backgroundSize: '18px 18px, 14px 14px, 100% 100%',
+            backgroundPosition: '0 0, 7px 7px, 0 0',
+            boxShadow:'inset 0 0 40px rgba(0,0,0,0.45), 0 6px 24px rgba(0,0,0,0.35)',
+            padding:'10px'
+          }
+        },
+          leaderboard.map(([name, total], i) => {
+            const nameQuotes = quotes[name] ? Object.entries(quotes[name]) : [];
+            const isTop = total === leaderboard[0][1];
+            const isDragging = dragName === name;
+            const pos = isDragging && livePos ? livePos : (() => {
+              const p = getPosition(name, i);
+              return { leftPx: null, topPx: p.yPx, xPct: p.xPct };
+            })();
+            const leftStyle = isDragging && livePos ? `${livePos.leftPx}px` : `${pos.xPct}%`;
+            const rotation = isDragging ? 0 : pinRotation(name);
+
+            return React.createElement('div', {
+              key: name,
+              style:{
+                position:'absolute',
+                left: leftStyle,
+                top: `${pos.topPx}px`,
+                width: `${CARD_WIDTH}px`,
+                transform: `rotate(${rotation}deg) ${isDragging ? 'scale(1.03)' : 'scale(1)'}`,
+                transition: isDragging ? 'none' : 'left 0.2s ease, top 0.2s ease',
+                zIndex: isDragging ? 50 : (isTop ? 3 : 2)
+              }
+            },
+              // Pushpin, sticking out above the card.
+              React.createElement('div', {
+                onMouseDown: (e) => unlocked && startDrag(name, i, e),
+                onTouchStart: (e) => unlocked && startDrag(name, i, e),
+                title: unlocked ? 'Drag to move' : name,
+                style:{
+                  position:'absolute', top:'-16px', left:'50%', transform:'translateX(-50%)',
+                  width:'40px', height:'40px', borderRadius:'50%',
+                  background:'radial-gradient(circle at 35% 30%, #ffe08a, var(--gold-deep) 75%)',
+                  border:'1px solid rgba(0,0,0,0.35)',
+                  boxShadow:'0 6px 10px rgba(0,0,0,0.5)',
+                  cursor: unlocked ? (isDragging ? 'grabbing' : 'grab') : 'default',
+                  touchAction:'none',
+                  zIndex:4
+                }
+              }),
+
+              React.createElement('div', {
+                style:{
+                  background: 'var(--card)',
+                  border: `1px solid ${isTop ? 'var(--gold-deep)' : 'var(--line)'}`,
+                  borderRadius:'12px',
+                  padding:'36px 34px 34px',
+                  boxShadow: isDragging ? '0 16px 30px rgba(0,0,0,0.55)' : (isTop ? '0 0 0 2px rgba(232,178,61,0.35), 0 8px 18px rgba(0,0,0,0.4)' : '0 6px 14px rgba(0,0,0,0.35)'),
+                  display:'flex', flexDirection:'column', gap:'22px'
+                }
+              },
+                React.createElement('div', {style:{display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px'}},
+                  React.createElement('div', {style:{display:'flex', alignItems:'baseline', gap:'10px', minWidth:0}},
+                    isTop && React.createElement('span', {style:{fontSize:'34px', flexShrink:0}}, '🏆'),
+                    React.createElement('span', {
+                      className:'display',
+                      style:{
+                        fontSize:'62px', lineHeight:1, color:'var(--ink)',
+                        letterSpacing:'0.02em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'
+                      }
+                    }, name.toUpperCase())
+                  ),
+                  React.createElement('span', {style:{
+                    display:'flex', alignItems:'center', gap:'6px',
+                    fontSize:'32px', fontWeight:900, color:'#4a2f00',
+                    background:'linear-gradient(160deg, #ffe694, var(--gold) 55%, var(--gold-deep))',
+                    border:'1px solid #fff3cf',
+                    borderRadius:'30px', padding:'10px 24px', flexShrink:0,
+                    boxShadow:'0 0 0 1px rgba(232,178,61,0.5), 0 4px 12px rgba(232,178,61,0.55), inset 0 1px 0 rgba(255,255,255,0.6)',
+                    textShadow:'0 1px 0 rgba(255,255,255,0.4)'
+                  }},
+                    React.createElement('span', {style:{fontSize:'34px'}}, '⭐'),
+                    total
+                  )
+                ),
+
+                nameQuotes.length > 0 && React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:'10px'}},
+                  nameQuotes.map(([qKey, q]) =>
+                    React.createElement('div', {
+                      key:qKey,
+                      style:{
+                        background:'rgba(140,20,32,0.06)', borderLeft:'4px solid var(--red-deep)',
+                        borderRadius:'8px', padding:'16px 18px', fontSize:'22px', color:'var(--ink)',
+                        lineHeight:1.55, display:'flex', flexDirection:'column', gap:'10px'
+                      }
+                    },
+                      q.text && React.createElement('span', {style:{fontStyle:'italic'}}, '“', q.text, '”'),
+                      q.imageData && React.createElement('img', {
+                        src: q.imageData,
+                        alt: `Review screenshot for ${name}`,
+                        style:{width:'100%', borderRadius:'8px', display:'block', border:'1px solid var(--line)'}
+                      }),
+                      unlocked && React.createElement('button', {
+                        onClick: () => onRemoveQuote(name, qKey),
+                        title:'Delete this quote',
+                        style:{
+                          alignSelf:'flex-start', display:'flex', alignItems:'center', gap:'6px',
+                          border:'1px solid rgba(200,30,44,0.4)', background:'rgba(200,30,44,0.08)',
+                          color:'var(--red-deep)', fontSize:'17px', fontWeight:600, borderRadius:'8px',
+                          padding:'8px 16px', cursor:'pointer'
+                        }
+                      }, '🗑 Delete')
+                    )
+                  )
+                ),
+
+                unlocked && React.createElement('div', null,
+                  openAddFor === name
+                    ? React.createElement('div', {style:{display:'flex', flexDirection:'column', gap:'8px'}},
+                        React.createElement('textarea', {
+                          value: draftText[name] || '',
+                          onChange: e => setDraftText(prev => ({...prev, [name]: e.target.value})),
+                          onPaste: e => handlePaste(e, name),
+                          onKeyDown: e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleAdd(name); },
+                          placeholder: 'Paste review text, or paste (Ctrl/Cmd+V) a screenshot here…',
+                          rows: 2,
+                          style:{
+                            width:'100%', resize:'vertical', fontSize:'19px', padding:'14px',
+                            borderRadius:'7px', border:'1px solid var(--line)',
+                            background:'#fff', color:'var(--ink)', fontFamily:'inherit'
+                          }
+                        }),
+
+                        draftImage[name] && React.createElement('div', {style:{position:'relative', display:'inline-block', alignSelf:'flex-start'}},
+                          React.createElement('img', {
+                            src: draftImage[name].previewUrl,
+                            alt: 'Screenshot preview',
+                            style:{maxWidth:'190px', maxHeight:'140px', borderRadius:'7px', border:'1px solid var(--line)', display:'block'}
+                          }),
+                          React.createElement('button', {
+                            onClick: () => clearImageForName(name),
+                            title:'Remove screenshot',
+                            style:{
+                              position:'absolute', top:'-7px', right:'-7px', width:'22px', height:'22px',
+                              borderRadius:'50%', border:'1px solid var(--gold-deep)', background:'var(--ink)',
+                              color:'var(--gold)', fontSize:'12px', lineHeight:'19px', cursor:'pointer', padding:0
+                            }
+                          }, '✕')
+                        ),
+
+                        React.createElement('input', {
+                          ref: el => { fileInputRefs.current[name] = el; },
+                          type:'file', accept:'image/*',
+                          onChange: e => handleFilePicked(e, name),
+                          style:{display:'none'}
+                        }),
+
+                        React.createElement('div', {style:{display:'flex', gap:'8px', flexWrap:'wrap'}},
+                          React.createElement('button', {
+                            onClick: () => fileInputRefs.current[name] && fileInputRefs.current[name].click(),
+                            style:{...lockBtnStyle, padding:'10px 18px', fontSize:'16px', background:'transparent'}
+                          }, '📷 Screenshot'),
+                          React.createElement('button', {
+                            onClick: () => handleAdd(name),
+                            disabled: uploadingFor === name,
+                            style:{...lockBtnStyle, padding:'10px 18px', fontSize:'16px', opacity: uploadingFor === name ? 0.6 : 1}
+                          }, uploadingFor === name ? 'Saving…' : 'Save'),
+                          React.createElement('button', {
+                            onClick: () => { setOpenAddFor(null); setDraftText(prev => ({...prev, [name]: ''})); clearImageForName(name); },
+                            style:{...lockBtnStyle, padding:'10px 18px', fontSize:'16px', background:'transparent', color:'#8a7f76'}
+                          }, 'Cancel')
+                        )
+                      )
+                    : React.createElement('button', {
+                        onClick: () => setOpenAddFor(name),
+                        style:{
+                          ...lockBtnStyle, alignSelf:'flex-start', padding:'10px 18px', fontSize:'16px',
+                          background:'transparent', border:'1px dashed var(--gold-deep)', color:'var(--gold-deep)'
+                        }
+                      }, '+ Add review quote')
+                )
+              )
+            );
+          })
+        )
   );
 }
 
