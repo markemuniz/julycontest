@@ -296,7 +296,7 @@ function App(){
     if (!unlocked) return;
     const key = cellKey(name, day);
     setPoppedKey(key + Date.now());
-    const next = Math.min((grid[key]||0) + 1, 9);
+    const next = (grid[key]||0) + 1;
     writeCount(key, next);
   };
 
